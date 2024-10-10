@@ -550,7 +550,84 @@ class SaveExpData:
             dill.dump(save_exp, f)
 
         return file_name
+    def detect_face(self, image_rgb, crop_factor, bbox_x1=None, bbox_y1=None, bbox_x2=None, bbox_y2=None, sort=True):
+        if bbox_x1 is not None and bbox_y1 is not None and bbox_x2 is not None and bbox_y2 is not None:
+            # Use the provided bounding box parameters
+            return [bbox_x1, bbox_y1, bbox_x2, bbox_y2]
+        else:
+            # Fall back to the original face detection logic
+            detect_model = self.get_detect_model()
+            pred = detect_model(image_rgb, conf=0.7, device="")
+            bboxes = pred[0].boxes.xyxy.cpu().numpy()
 
+            w, h = get_rgb_size(image_rgb)
+
+            cx = w / 2
+            min_diff = w
+            best_box = None
+            for x1, y1, x2, y2 in bboxes:
+                bbox_w = x2 - x1
+                if bbox_w < 30: continue
+                diff = abs(cx - (x1 + bbox_w / 2))
+                if diff < min_diff:
+                    best_box = [x1, y1, x2, y2]
+                    min_diff = diff
+
+            if best_box is None:
+                print("Failed to detect face!!")
+                return [0, 0, w, h]
+
+            x1, y1, x2, y2 = best_box
+
+            #for x1, y1, x2, y2 in bboxes:
+            bbox_w = x2 - x1
+            bbox_h = y2 - y1
+
+            crop_w = bbox_w * crop_factor
+            crop_h = bbox_h * crop_factor
+
+            crop_w = max(crop_h, crop_w)
+            crop_h = crop_w
+
+            kernel_x = int(x1 + bbox_w / 2)
+            kernel_y = int(y1 + bbox_h / 2)
+
+            new_x1 = int(kernel_x - crop_w / 2)
+            new_x2 = int(kernel_x + crop_w / 2)
+            new_y1 = int(kernel_y - crop_h / 2)
+            new_y2 = int(kernel_y + crop_h / 2)
+
+            if not sort:
+                return [int(new_x1), int(new_y1), int(new_x2), int(new_y2)]
+
+            if new_x1 < 0:
+                new_x2 -= new_x1
+                new_x1 = 0
+            elif w < new_x2:
+                new_x1 -= (new_x2 - w)
+                new_x2 = w
+                if new_x1 < 0:
+                    new_x2 -= new_x1
+                    new_x1 = 0
+
+            if new_y1 < 0:
+                new_y2 -= new_y1
+                new_y1 = 0
+            elif h < new_y2:
+                new_y1 -= (new_y2 - h)
+                new_y2 = h
+                if new_y1 < 0:
+                    new_y2 -= new_x1
+                    new_y1 = 0
+
+            if w < new_x2 and h < new_y2:
+                over_x = new_x2 - w
+                over_y = new_y2 - h
+                over_min = min(over_x, over_y)
+                new_x2 -= over_min
+                new_y2 -= over_min
+
+            return [int(new_x1), int(new_y1), int(new_x2), int(new_y2)]
 class LoadExpData:
     @classmethod
     def INPUT_TYPES(s):
@@ -724,7 +801,7 @@ class AdvancedLivePortrait:
 
 
     def run(self, retargeting_eyes, retargeting_mouth, turn_on, tracking_src_vid, animate_without_vid, command, crop_factor,
-            src_images=None, driving_images=None, motion_link=None):
+            src_images=None, driving_images=None, motion_link=None, bbox_x1=None, bbox_y1=None, bbox_x2=None, bbox_y2=None):
         if turn_on == False: return (None,None)
         src_length = 1
 
@@ -735,7 +812,7 @@ class AdvancedLivePortrait:
 
         if src_images != None:
             src_length = len(src_images)
-            if id(src_images) != id(self.src_images) or self.crop_factor != crop_factor:
+            if id(src_images) != id(self.src_images) or self.crop_factor != crop
                 self.crop_factor = crop_factor
                 self.src_images = src_images
                 if 1 < src_length:
@@ -862,6 +939,10 @@ class ExpressionEditor:
                 "sample_parts": (["OnlyExpression", "OnlyRotation", "OnlyMouth", "OnlyEyes", "All"],),
                 "crop_factor": ("FLOAT", {"default": crop_factor_default,
                                           "min": crop_factor_min, "max": crop_factor_max, "step": 0.1}),
+                "bbox_x1": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1, "display": display}),
+                "bbox_y1": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1, "display": display}),
+                "bbox_x2": ("INT", {"default": 100, "min": 0, "max": 200, "step": 1, "display": display}),
+                "bbox_y2": ("INT", {"default": 100, "min": 0, "max": 200, "step": 1, "display": display}),
             },
 
             "optional": {"src_image": ("IMAGE",), "motion_link": ("EDITOR_LINK",),
@@ -881,8 +962,8 @@ class ExpressionEditor:
     # INPUT_IS_LIST = False
     # OUTPUT_IS_LIST = (False,)
 
-    def run(self, rotate_pitch, rotate_yaw, rotate_roll, blink, eyebrow, wink, pupil_x, pupil_y, aaa, eee, woo, smile,
-            src_ratio, sample_ratio, sample_parts, crop_factor, src_image=None, sample_image=None, motion_link=None, add_exp=None):
+    def run(self, rotate_pitch, rotate_yaw, rotate_roll, blink, eyebrow, wink, pupil_x, pupil_y, aaa, eee,woo, smile,
+            src_ratio, sample_ratio, sample_parts, crop_factor, bbox_x1, bbox_y1, bbox_x2, bbox_y2, src_image=None, sample_image=None, motion_link=None, add_exp=None):
         rotate_yaw = -rotate_yaw
 
         new_editor_link = None
